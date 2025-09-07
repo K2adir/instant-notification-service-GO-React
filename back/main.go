@@ -115,6 +115,11 @@ func main() {
         c.Next()
     })
 
+    // Root: quick service status
+    r.GET("/", func(c *gin.Context) {
+        c.String(http.StatusOK, "Instant Notification service is running")
+    })
+
 	// POST /api/submit-form: Handle form submission
     r.POST("/api/submit-form", func(c *gin.Context) {
         var sub Submission
