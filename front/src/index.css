@@ -41,6 +41,8 @@ h2 {
 
 p { color: var(--muted); }
 
+.muted { color: var(--muted); }
+
 section {
   background: var(--card);
   border: 1px solid var(--border);
