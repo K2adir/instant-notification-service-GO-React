@@ -25,10 +25,16 @@ type Submission struct {
 }
 
 type DBSubmission struct {
+    ID        int64  `json:"id"`
     Name      string `json:"name"`
     Email     string `json:"email"`
     Message   string `json:"message"`
     Timestamp string `json:"timestamp"`
+    ClientSubmitAtMs        sql.NullInt64 `json:"clientSubmitAtMs"`
+    ServerBroadcastAtMs     sql.NullInt64 `json:"serverBroadcastAtMs"`
+    ClientSubmitToServerMs  sql.NullInt64 `json:"clientSubmitToServerMs"`
+    ClientServerToDisplayMs sql.NullInt64 `json:"clientServerToDisplayMs"`
+    ClientSubmitToDisplayMs sql.NullInt64 `json:"clientSubmitToDisplayMs"`
 }
 
 func main() {
@@ -52,12 +58,24 @@ func main() {
 			name TEXT,
 			email TEXT,
 			message TEXT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			client_submit_at_ms INTEGER,
+			server_broadcast_at_ms INTEGER,
+			client_submit_to_server_ms INTEGER,
+			client_server_to_display_ms INTEGER,
+			client_submit_to_display_ms INTEGER
 		)
 	`)
 	if err != nil {
 		log.Fatal("Failed to create table:", err)
 	}
+
+	// Best-effort migrations for existing DBs; ignore errors if columns already exist
+	_, _ = db.Exec(`ALTER TABLE submissions ADD COLUMN client_submit_at_ms INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE submissions ADD COLUMN server_broadcast_at_ms INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE submissions ADD COLUMN client_submit_to_server_ms INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE submissions ADD COLUMN client_server_to_display_ms INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE submissions ADD COLUMN client_submit_to_display_ms INTEGER`)
 
     // Simple in-process broadcaster for SSE clients
     type broadcaster struct {
@@ -133,32 +151,38 @@ func main() {
         }
 
 		// Insert into SQLite
-		_, err := db.Exec(
-			"INSERT INTO submissions (name, email, message) VALUES (?, ?, ?)",
-			sub.Name, sub.Email, sub.Message,
+		res, err := db.Exec(
+			"INSERT INTO submissions (name, email, message, client_submit_at_ms) VALUES (?, ?, ?, ?)",
+			sub.Name, sub.Email, sub.Message, sub.ClientSubmitAt,
 		)
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save submission"})
             return
         }
 
-        // Broadcast the new submission to SSE clients with server timestamp
+        id, _ := res.LastInsertId()
+        serverBroadcastAt := time.Now().UnixMilli()
+        _, _ = db.Exec("UPDATE submissions SET server_broadcast_at_ms = ? WHERE id = ?", serverBroadcastAt, id)
+
+        // Broadcast the new submission to SSE clients with ids and timestamps
         payload, _ := json.Marshal(struct {
+            ID              int64  `json:"id"`
             Name            string `json:"name"`
             Email           string `json:"email"`
             Message         string `json:"message"`
             ClientSubmitAt  int64  `json:"clientSubmitAt,omitempty"`
             ServerBroadcast int64  `json:"serverBroadcastAt"`
         }{
+            ID:              id,
             Name:            sub.Name,
             Email:           sub.Email,
             Message:         sub.Message,
             ClientSubmitAt:  sub.ClientSubmitAt,
-            ServerBroadcast: time.Now().UnixMilli(),
+            ServerBroadcast: serverBroadcastAt,
         })
         b.send <- string(payload)
 
-        c.JSON(http.StatusOK, gin.H{"message": "Submission saved"})
+        c.JSON(http.StatusOK, gin.H{"message": "Submission saved", "id": id})
     })
 
     // GET /api/submit-form: Return recent submissions (proof endpoint)
@@ -171,21 +195,48 @@ func main() {
             }
         }
 
-        rows, err := db.Query(`SELECT name, email, message, timestamp FROM submissions ORDER BY timestamp DESC LIMIT ?`, limit)
+        rows, err := db.Query(`SELECT id, name, email, message, timestamp,
+            client_submit_at_ms, server_broadcast_at_ms,
+            client_submit_to_server_ms, client_server_to_display_ms, client_submit_to_display_ms
+            FROM submissions ORDER BY timestamp DESC LIMIT ?`, limit)
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query submissions"})
             return
         }
         defer rows.Close()
 
-        var out []DBSubmission
+        type apiRow struct {
+            ID        int64   `json:"id"`
+            Name      string  `json:"name"`
+            Email     string  `json:"email"`
+            Message   string  `json:"message"`
+            Timestamp string  `json:"timestamp"`
+            ClientSubmitAtMs        *int64 `json:"clientSubmitAtMs,omitempty"`
+            ServerBroadcastAtMs     *int64 `json:"serverBroadcastAtMs,omitempty"`
+            ClientSubmitToServerMs  *int64 `json:"clientSubmitToServerMs,omitempty"`
+            ClientServerToDisplayMs *int64 `json:"clientServerToDisplayMs,omitempty"`
+            ClientSubmitToDisplayMs *int64 `json:"clientSubmitToDisplayMs,omitempty"`
+        }
+        ptr := func(n sql.NullInt64) *int64 { if n.Valid { v := n.Int64; return &v }; return nil }
+        var out []apiRow
         for rows.Next() {
             var s DBSubmission
-            if err := rows.Scan(&s.Name, &s.Email, &s.Message, &s.Timestamp); err != nil {
+            if err := rows.Scan(&s.ID, &s.Name, &s.Email, &s.Message, &s.Timestamp, &s.ClientSubmitAtMs, &s.ServerBroadcastAtMs, &s.ClientSubmitToServerMs, &s.ClientServerToDisplayMs, &s.ClientSubmitToDisplayMs); err != nil {
                 c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read submissions"})
                 return
             }
-            out = append(out, s)
+            out = append(out, apiRow{
+                ID:        s.ID,
+                Name:      s.Name,
+                Email:     s.Email,
+                Message:   s.Message,
+                Timestamp: s.Timestamp,
+                ClientSubmitAtMs:        ptr(s.ClientSubmitAtMs),
+                ServerBroadcastAtMs:     ptr(s.ServerBroadcastAtMs),
+                ClientSubmitToServerMs:  ptr(s.ClientSubmitToServerMs),
+                ClientServerToDisplayMs: ptr(s.ClientServerToDisplayMs),
+                ClientSubmitToDisplayMs: ptr(s.ClientSubmitToDisplayMs),
+            })
         }
         if err := rows.Err(); err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read submissions"})
@@ -254,21 +305,48 @@ func main() {
             }
         }
 
-        rows, err := db.Query(`SELECT name, email, message, timestamp FROM submissions ORDER BY timestamp DESC LIMIT ?`, limit)
+        rows, err := db.Query(`SELECT id, name, email, message, timestamp,
+            client_submit_at_ms, server_broadcast_at_ms,
+            client_submit_to_server_ms, client_server_to_display_ms, client_submit_to_display_ms
+            FROM submissions ORDER BY timestamp DESC LIMIT ?`, limit)
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query leads"})
             return
         }
         defer rows.Close()
 
-        var out []DBSubmission
+        type apiRow2 struct {
+            ID        int64   `json:"id"`
+            Name      string  `json:"name"`
+            Email     string  `json:"email"`
+            Message   string  `json:"message"`
+            Timestamp string  `json:"timestamp"`
+            ClientSubmitAtMs        *int64 `json:"clientSubmitAtMs,omitempty"`
+            ServerBroadcastAtMs     *int64 `json:"serverBroadcastAtMs,omitempty"`
+            ClientSubmitToServerMs  *int64 `json:"clientSubmitToServerMs,omitempty"`
+            ClientServerToDisplayMs *int64 `json:"clientServerToDisplayMs,omitempty"`
+            ClientSubmitToDisplayMs *int64 `json:"clientSubmitToDisplayMs,omitempty"`
+        }
+        ptr2 := func(n sql.NullInt64) *int64 { if n.Valid { v := n.Int64; return &v }; return nil }
+        var out []apiRow2
         for rows.Next() {
             var s DBSubmission
-            if err := rows.Scan(&s.Name, &s.Email, &s.Message, &s.Timestamp); err != nil {
+            if err := rows.Scan(&s.ID, &s.Name, &s.Email, &s.Message, &s.Timestamp, &s.ClientSubmitAtMs, &s.ServerBroadcastAtMs, &s.ClientSubmitToServerMs, &s.ClientServerToDisplayMs, &s.ClientSubmitToDisplayMs); err != nil {
                 c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read leads"})
                 return
             }
-            out = append(out, s)
+            out = append(out, apiRow2{
+                ID:        s.ID,
+                Name:      s.Name,
+                Email:     s.Email,
+                Message:   s.Message,
+                Timestamp: s.Timestamp,
+                ClientSubmitAtMs:        ptr2(s.ClientSubmitAtMs),
+                ServerBroadcastAtMs:     ptr2(s.ServerBroadcastAtMs),
+                ClientSubmitToServerMs:  ptr2(s.ClientSubmitToServerMs),
+                ClientServerToDisplayMs: ptr2(s.ClientServerToDisplayMs),
+                ClientSubmitToDisplayMs: ptr2(s.ClientSubmitToDisplayMs),
+            })
         }
         if err := rows.Err(); err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read leads"})
@@ -276,6 +354,50 @@ func main() {
         }
 
         c.JSON(http.StatusOK, out)
+    })
+
+    // POST /api/submissions/:id/latency: store client-reported latency numbers
+    r.POST("/api/submissions/:id/latency", func(c *gin.Context) {
+        idStr := c.Param("id")
+        id, err := strconv.ParseInt(idStr, 10, 64)
+        if err != nil || id <= 0 {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+            return
+        }
+        var body struct {
+            SubmitToServerMs  *int64 `json:"submitToServerMs"`
+            ServerToDisplayMs *int64 `json:"serverToDisplayMs"`
+            SubmitToDisplayMs *int64 `json:"submitToDisplayMs"`
+        }
+        if err := c.ShouldBindJSON(&body); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+            return
+        }
+        sets := []string{}
+        args := []interface{}{}
+        if body.SubmitToServerMs != nil {
+            sets = append(sets, "client_submit_to_server_ms = ?")
+            args = append(args, *body.SubmitToServerMs)
+        }
+        if body.ServerToDisplayMs != nil {
+            sets = append(sets, "client_server_to_display_ms = ?")
+            args = append(args, *body.ServerToDisplayMs)
+        }
+        if body.SubmitToDisplayMs != nil {
+            sets = append(sets, "client_submit_to_display_ms = ?")
+            args = append(args, *body.SubmitToDisplayMs)
+        }
+        if len(sets) == 0 {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+            return
+        }
+        args = append(args, id)
+        q := "UPDATE submissions SET " + strings.Join(sets, ", ") + " WHERE id = ?"
+        if _, err := db.Exec(q, args...); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update latency"})
+            return
+        }
+        c.JSON(http.StatusOK, gin.H{"ok": true})
     })
 
     // Start server

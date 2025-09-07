@@ -6,9 +6,18 @@ type Submission = {
   message: string;
 };
 
-type SubmissionFromApi = Submission & { timestamp: string };
+type SubmissionFromApi = Submission & {
+  id: number;
+  timestamp: string;
+  clientSubmitAtMs?: number | null;
+  serverBroadcastAtMs?: number | null;
+  clientSubmitToServerMs?: number | null;
+  clientServerToDisplayMs?: number | null;
+  clientSubmitToDisplayMs?: number | null;
+};
 
 type StreamSubmission = Submission & {
+  id: number;
   clientSubmitAt?: number;
   serverBroadcastAt?: number;
 };
@@ -70,9 +79,28 @@ function App() {
                 email: rec.email,
                 message: rec.message,
                 receivedAt: isNaN(ts) ? Date.now() : ts,
+                submitToServerMs:
+                  typeof rec.clientSubmitToServerMs === "number"
+                    ? rec.clientSubmitToServerMs
+                    : undefined,
+                serverToDisplayMs:
+                  typeof rec.clientServerToDisplayMs === "number"
+                    ? rec.clientServerToDisplayMs
+                    : undefined,
+                submitToDisplayMs:
+                  typeof rec.clientSubmitToDisplayMs === "number"
+                    ? rec.clientSubmitToDisplayMs
+                    : undefined,
               };
             })
-            .filter(Boolean) as Array<Submission & { receivedAt: number }>;
+            .filter(Boolean) as Array<
+              Submission & {
+                receivedAt: number;
+                submitToDisplayMs?: number;
+                serverToDisplayMs?: number;
+                submitToServerMs?: number;
+              }
+            >;
           setLeads(normalized);
         }
       } catch {
@@ -100,6 +128,21 @@ function App() {
           typeof data.serverBroadcastAt === "number"
             ? Math.max(0, data.serverBroadcastAt - data.clientSubmitAt)
             : undefined;
+
+        // Persist latency numbers back to backend for this submission id
+        if (typeof data.id === "number") {
+          const payload = {
+            submitToServerMs,
+            serverToDisplayMs,
+            submitToDisplayMs,
+          };
+          // Fire-and-forget; errors are non-fatal for UI
+          fetch(`${API_BASE}/api/submissions/${data.id}/latency`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }).catch(() => {});
+        }
 
         setLeads((prev) =>
           [
