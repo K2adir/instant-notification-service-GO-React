@@ -27,6 +27,4 @@ Reload: Frontend preloads recent history via GET /api/leads?limit=20 (includes s
 
 Proof (JSON): View recent entries at:
 
-GET /api/submit-form?limit=5
-
-GET /api/leads?limit=5
+Verify your submittion on the backend: https://instant-notification.onrender.com/api/submit-form?limit=5
