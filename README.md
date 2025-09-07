@@ -10,7 +10,8 @@ Frontend: https://instant-notification.vercel.app/
 The frontend includes an auto wake-up and reconnect: 
 
 it pings the backend and retries the SSE connection with backoff when showing “Connecting to live updates…”. If it still doesn’t connect, wait a bit or open the backend URL once.
-Data Flow
+
+## Data Flow
 
 Submit: Frontend posts to POST /api/submit-form on the Go backend.
 
