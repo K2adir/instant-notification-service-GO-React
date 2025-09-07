@@ -8,6 +8,11 @@ type Submission = {
 
 type SubmissionFromApi = Submission & { timestamp: string };
 
+type StreamSubmission = Submission & {
+  clientSubmitAt?: number;
+  serverBroadcastAt?: number;
+};
+
 const API_BASE = (() => {
   const fromEnv = import.meta.env.VITE_API_BASE as string | undefined;
   if (fromEnv) return fromEnv;
@@ -27,7 +32,14 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [leads, setLeads] = useState<
-    Array<Submission & { receivedAt: number }>
+    Array<
+      Submission & {
+        receivedAt: number;
+        submitToDisplayMs?: number;
+        serverToDisplayMs?: number;
+        submitToServerMs?: number;
+      }
+    >
   >([]);
 
   const controllerRef = useRef<AbortController | null>(null);
@@ -73,9 +85,35 @@ function App() {
     es.onerror = () => setConnected(false);
     es.addEventListener("submission", (ev: MessageEvent) => {
       try {
-        const data: Submission = JSON.parse(ev.data);
+        const now = Date.now();
+        const data: StreamSubmission = JSON.parse(ev.data);
+        const submitToDisplayMs =
+          typeof data.clientSubmitAt === "number"
+            ? Math.max(0, now - data.clientSubmitAt)
+            : undefined;
+        const serverToDisplayMs =
+          typeof data.serverBroadcastAt === "number"
+            ? Math.max(0, now - data.serverBroadcastAt)
+            : undefined;
+        const submitToServerMs =
+          typeof data.clientSubmitAt === "number" &&
+          typeof data.serverBroadcastAt === "number"
+            ? Math.max(0, data.serverBroadcastAt - data.clientSubmitAt)
+            : undefined;
+
         setLeads((prev) =>
-          [{ ...data, receivedAt: Date.now() }, ...prev].slice(0, 50)
+          [
+            {
+              name: data.name,
+              email: data.email,
+              message: data.message,
+              receivedAt: now,
+              submitToDisplayMs,
+              serverToDisplayMs,
+              submitToServerMs,
+            },
+            ...prev,
+          ].slice(0, 50)
         );
       } catch {
         // ignore parse errors
@@ -96,7 +134,7 @@ function App() {
       const res = await fetch(`${API_BASE}/api/submit-form`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, message }),
+        body: JSON.stringify({ name, email, message, clientSubmitAt: Date.now() }),
         signal: ctrl.signal,
       });
       if (!res.ok) {
@@ -253,6 +291,13 @@ function App() {
                     <span className="muted">{l.email}</span>
                   </div>
                   <p style={{ marginTop: 8 }}>{l.message}</p>
+                  <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                    Latency: {l.submitToServerMs !== undefined ? `${l.submitToServerMs}ms submit→server` : "—"}
+                    {" "}·{" "}
+                    {l.serverToDisplayMs !== undefined ? `${l.serverToDisplayMs}ms server→display` : "—"}
+                    {" "}·{" "}
+                    {l.submitToDisplayMs !== undefined ? `${l.submitToDisplayMs}ms submit→display` : "—"}
+                  </div>
                 </li>
               ))}
             </ul>

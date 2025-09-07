@@ -20,6 +20,8 @@ type Submission struct {
     Name    string `json:"name"`
     Email   string `json:"email"`
     Message string `json:"message"`
+    // Optional client-side submit timestamp in milliseconds since epoch
+    ClientSubmitAt int64 `json:"clientSubmitAt,omitempty"`
 }
 
 type DBSubmission struct {
@@ -140,8 +142,20 @@ func main() {
             return
         }
 
-        // Broadcast the new submission to SSE clients
-        payload, _ := json.Marshal(sub)
+        // Broadcast the new submission to SSE clients with server timestamp
+        payload, _ := json.Marshal(struct {
+            Name            string `json:"name"`
+            Email           string `json:"email"`
+            Message         string `json:"message"`
+            ClientSubmitAt  int64  `json:"clientSubmitAt,omitempty"`
+            ServerBroadcast int64  `json:"serverBroadcastAt"`
+        }{
+            Name:            sub.Name,
+            Email:           sub.Email,
+            Message:         sub.Message,
+            ClientSubmitAt:  sub.ClientSubmitAt,
+            ServerBroadcast: time.Now().UnixMilli(),
+        })
         b.send <- string(payload)
 
         c.JSON(http.StatusOK, gin.H{"message": "Submission saved"})
