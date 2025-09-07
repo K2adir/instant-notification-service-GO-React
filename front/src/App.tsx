@@ -39,7 +39,6 @@ function App() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
   const [connStatus, setConnStatus] = useState<string>("Connecting to live updates…");
   const [leads, setLeads] = useState<
     Array<
@@ -115,20 +114,18 @@ function App() {
 
     const attachHandlers = (es: EventSource) => {
       es.onopen = () => {
-        setConnected(true);
         setConnStatus("Live updates connected");
         retryRef.current = 0;
       };
       es.onerror = () => {
-        setConnected(false);
         setConnStatus("Waking backend and reconnecting…");
         // Proactively ping the backend root to wake Render, then reconnect with backoff
         const attempt = ++retryRef.current;
-        fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => {});
+        fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => undefined);
         const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
         setTimeout(() => {
           if (cleanup) return;
-          try { esRef.current?.close(); } catch {}
+          try { esRef.current?.close(); } catch (e) { void e }
           const next = new EventSource(`${API_BASE}/api/stream/submissions`);
           esRef.current = next;
           attachHandlers(next);
@@ -189,7 +186,7 @@ function App() {
 
     // Initial connect (with a gentle warm-up ping to reduce cold start latency)
     setConnStatus("Connecting to live updates…");
-    fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => {});
+    fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => undefined);
     const es0 = new EventSource(`${API_BASE}/api/stream/submissions`);
     esRef.current = es0;
     attachHandlers(es0);
