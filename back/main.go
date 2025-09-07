@@ -96,13 +96,15 @@ func main() {
 
     // Initialize Gin router
     r := gin.Default()
+    r.RemoveExtraSlash = true
 
     // CORS: allow configured origins
     r.Use(func(c *gin.Context) {
         origin := c.GetHeader("Origin")
+        norm := normalizeOrigin(origin)
         if allowedOrigins["*"] {
             c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-        } else if allowedOrigins[origin] {
+        } else if allowedOrigins[norm] {
             c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
             c.Writer.Header().Set("Vary", "Origin")
         }
@@ -153,7 +155,7 @@ func main() {
         // Mirror CORS origin if allowed
         if allowedOrigins["*"] {
             c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-        } else if origin := c.GetHeader("Origin"); allowedOrigins[origin] {
+        } else if origin := c.GetHeader("Origin"); allowedOrigins[normalizeOrigin(origin)] {
             c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
             c.Writer.Header().Set("Vary", "Origin")
         }
@@ -251,7 +253,7 @@ func getEnv(key, def string) string {
 func parseAllowedOrigins(csv string) map[string]bool {
     out := make(map[string]bool)
     for _, p := range strings.Split(csv, ",") {
-        v := strings.TrimSpace(p)
+        v := normalizeOrigin(strings.TrimSpace(p))
         if v != "" {
             out[v] = true
         }
@@ -260,4 +262,9 @@ func parseAllowedOrigins(csv string) map[string]bool {
         out["*"] = true
     }
     return out
+}
+
+// normalizeOrigin ensures origins are compared without trailing slashes
+func normalizeOrigin(origin string) string {
+    return strings.TrimRight(origin, "/")
 }

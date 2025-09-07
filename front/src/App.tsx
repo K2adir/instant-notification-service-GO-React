@@ -8,7 +8,7 @@ type Submission = {
 
 type SubmissionFromApi = Submission & { timestamp: string }
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? window.location.origin
+const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) ?? window.location.origin).replace(/\/$/, '')
 
 function App() {
   const [name, setName] = useState('')
