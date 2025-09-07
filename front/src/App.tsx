@@ -40,6 +40,7 @@ function App() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connStatus, setConnStatus] = useState<string>("Connecting to live updates…");
   const [leads, setLeads] = useState<
     Array<
       Submission & {
@@ -108,15 +109,37 @@ function App() {
       }
     })();
 
-    const es = new EventSource(`${API_BASE}/api/stream/submissions`);
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.addEventListener("submission", (ev: MessageEvent) => {
-      try {
-        const now = Date.now();
-        const data: StreamSubmission = JSON.parse(ev.data);
-        const submitToDisplayMs =
-          typeof data.clientSubmitAt === "number"
+    const esRef = { current: null as EventSource | null };
+    const retryRef = { current: 0 };
+    let cleanup = false;
+
+    const attachHandlers = (es: EventSource) => {
+      es.onopen = () => {
+        setConnected(true);
+        setConnStatus("Live updates connected");
+        retryRef.current = 0;
+      };
+      es.onerror = () => {
+        setConnected(false);
+        setConnStatus("Waking backend and reconnecting…");
+        // Proactively ping the backend root to wake Render, then reconnect with backoff
+        const attempt = ++retryRef.current;
+        fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => {});
+        const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+        setTimeout(() => {
+          if (cleanup) return;
+          try { esRef.current?.close(); } catch {}
+          const next = new EventSource(`${API_BASE}/api/stream/submissions`);
+          esRef.current = next;
+          attachHandlers(next);
+        }, delay);
+      };
+      es.addEventListener("submission", (ev: MessageEvent) => {
+        try {
+          const now = Date.now();
+          const data: StreamSubmission = JSON.parse(ev.data);
+          const submitToDisplayMs =
+            typeof data.clientSubmitAt === "number"
             ? Math.max(0, now - data.clientSubmitAt)
             : undefined;
         const serverToDisplayMs =
@@ -158,11 +181,23 @@ function App() {
             ...prev,
           ].slice(0, 50)
         );
-      } catch {
-        // ignore parse errors
-      }
-    });
-    return () => es.close();
+        } catch {
+          // ignore parse errors
+        }
+      });
+    };
+
+    // Initial connect (with a gentle warm-up ping to reduce cold start latency)
+    setConnStatus("Connecting to live updates…");
+    fetch(`${API_BASE}/`, { cache: "no-store" }).catch(() => {});
+    const es0 = new EventSource(`${API_BASE}/api/stream/submissions`);
+    esRef.current = es0;
+    attachHandlers(es0);
+
+    return () => {
+      cleanup = true;
+      esRef.current?.close();
+    };
   }, []);
 
   async function onSubmit(e: React.FormEvent) {
@@ -218,9 +253,7 @@ function App() {
             Verify your submission on the backend:
           </a>
         </h5>
-        <p>
-          {connected ? "Live updates connected" : "Connecting to live updates…"}
-        </p>
+        <p>{connStatus}</p>
       </header>
       <main>
         <section>
