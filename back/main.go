@@ -147,6 +147,40 @@ func main() {
         c.JSON(http.StatusOK, gin.H{"message": "Submission saved"})
     })
 
+    // GET /api/submit-form: Return recent submissions (proof endpoint)
+    r.GET("/api/submit-form", func(c *gin.Context) {
+        // Default to last 10 for quick proof
+        limit := 10
+        if l := c.Query("limit"); l != "" {
+            if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 200 {
+                limit = v
+            }
+        }
+
+        rows, err := db.Query(`SELECT name, email, message, timestamp FROM submissions ORDER BY timestamp DESC LIMIT ?`, limit)
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query submissions"})
+            return
+        }
+        defer rows.Close()
+
+        var out []DBSubmission
+        for rows.Next() {
+            var s DBSubmission
+            if err := rows.Scan(&s.Name, &s.Email, &s.Message, &s.Timestamp); err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read submissions"})
+                return
+            }
+            out = append(out, s)
+        }
+        if err := rows.Err(); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read submissions"})
+            return
+        }
+
+        c.JSON(http.StatusOK, out)
+    })
+
     // GET /api/stream/submissions: Server-Sent Events stream of new submissions
     r.GET("/api/stream/submissions", func(c *gin.Context) {
         c.Writer.Header().Set("Content-Type", "text/event-stream")

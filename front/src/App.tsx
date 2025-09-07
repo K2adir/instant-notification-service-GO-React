@@ -8,7 +8,16 @@ type Submission = {
 
 type SubmissionFromApi = Submission & { timestamp: string }
 
-const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) ?? window.location.origin).replace(/\/$/, '')
+const API_BASE = (() => {
+  const fromEnv = import.meta.env.VITE_API_BASE as string | undefined
+  if (fromEnv) return fromEnv
+  if (typeof window !== 'undefined') {
+    // Helpful default for local dev (Vite on 5173, backend on 8080)
+    if (window.location.port === '5173') return 'http://localhost:8080'
+    return window.location.origin
+  }
+  return 'http://localhost:8080'
+})().replace(/\/$/, '')
 
 function App() {
   const [name, setName] = useState('')
