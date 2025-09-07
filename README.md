@@ -25,6 +25,4 @@ it pings the backend and retries the SSE connection with backoff when showing â€
 
 **Reload:** Frontend preloads recent history via GET /api/leads?limit=20 (includes stored latency, if any).
 
-**Proof (JSON):** View recent entries at:
-
 **Verify your submittion on the backend:** https://instant-notification.onrender.com/api/submit-form?limit=5
