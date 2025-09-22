@@ -2,14 +2,18 @@ Render free plans sleep on inactivity. First request may take 30–60s.
 
 Visit either:
 
-Backend: https://instant-notification.onrender.com/
-
-
 Frontend: https://instant-notification.vercel.app/
+
 
 The frontend includes an auto wake-up and reconnect: 
 
 it pings the backend and retries the SSE connection with backoff when showing “Connecting to live updates…”. If it still doesn’t connect, wait a bit or open the backend URL once.
+
+
+Backend: https://instant-notification.onrender.com/
+
+
+
 
 ## Data Flow
 
